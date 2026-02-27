@@ -287,16 +287,16 @@ export function createCommandHandlers(context: CommandHandlerContext) {
         break;
       case "fork":
         if (!args) {
-          chatLog.addSystem("usage: /fork <newkey>");
+          chatLog.addSystem("usage: /fork <key>");
           break;
         }
         try {
-          const targetKey = args.trim();
+          const key = args.trim();
           const result = await client.forkSession({
             sourceKey: state.currentSessionKey,
-            key: targetKey,
+            key,
           });
-          const nextKey = result.key?.trim() || targetKey;
+          const nextKey = result.key?.trim() || key;
           chatLog.addSystem(
             `forked ${formatSessionKey(state.currentSessionKey)} -> ${formatSessionKey(nextKey)}`,
           );
