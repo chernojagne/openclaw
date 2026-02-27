@@ -63,6 +63,7 @@ export function getSlashCommands(options: SlashCommandOptions = {}): SlashComman
     { name: "agents", description: "Open agent picker" },
     { name: "session", description: "Switch session (or open picker)" },
     { name: "sessions", description: "Open session picker" },
+    { name: "fork", description: "Fork current session into a new key and switch" },
     {
       name: "model",
       description: "Set model (or open picker)",
@@ -140,6 +141,7 @@ export function helpText(options: SlashCommandOptions = {}): string {
     "/status",
     "/agent <id> (or /agents)",
     "/session <key> (or /sessions)",
+    "/fork <newkey>",
     "/model <provider/model> (or /models)",
     `/think <${thinkLevels}>`,
     "/verbose <on|off>",

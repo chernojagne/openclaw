@@ -285,6 +285,26 @@ export function createCommandHandlers(context: CommandHandlerContext) {
       case "sessions":
         await openSessionSelector();
         break;
+      case "fork":
+        if (!args) {
+          chatLog.addSystem("usage: /fork <newkey>");
+          break;
+        }
+        try {
+          const targetKey = args.trim();
+          const result = await client.forkSession({
+            sourceKey: state.currentSessionKey,
+            key: targetKey,
+          });
+          const nextKey = result.key?.trim() || targetKey;
+          chatLog.addSystem(
+            `forked ${formatSessionKey(state.currentSessionKey)} -> ${formatSessionKey(nextKey)}`,
+          );
+          await setSession(nextKey);
+        } catch (err) {
+          chatLog.addSystem(`fork failed: ${String(err)}`);
+        }
+        break;
       case "model":
         if (!args) {
           await openModelSelector();

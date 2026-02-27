@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
+import path from "node:path";
 import { getAcpSessionManager } from "../../acp/control-plane/manager.js";
 import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { clearBootstrapSnapshot } from "../../agents/bootstrap-cache.js";
 import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
+import { forkSessionFromParent } from "../../auto-reply/reply/session.js";
 import { loadConfig } from "../../config/config.js";
 import {
   loadSessionStore,
@@ -28,6 +30,7 @@ import {
   errorShape,
   validateSessionsCompactParams,
   validateSessionsDeleteParams,
+  validateSessionsForkParams,
   validateSessionsListParams,
   validateSessionsPatchParams,
   validateSessionsPreviewParams,
@@ -507,6 +510,123 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       });
     }
     respond(true, { ok: true, key: target.canonicalKey, entry: next }, undefined);
+  },
+  "sessions.fork": async ({ params, respond }) => {
+    if (!assertValidParams(params, validateSessionsForkParams, "sessions.fork", respond)) {
+      return;
+    }
+    const p = params;
+    const key = requireSessionKey(p.key, respond);
+    if (!key) {
+      return;
+    }
+    const sourceKey = requireSessionKey(p.sourceKey, respond);
+    if (!sourceKey) {
+      return;
+    }
+    if (sourceKey === key) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "sourceKey and key must differ"),
+      );
+      return;
+    }
+
+    const sourceResolved = resolveGatewaySessionTargetFromKey(sourceKey);
+    const targetResolved = resolveGatewaySessionTargetFromKey(key);
+    if (sourceResolved.storePath !== targetResolved.storePath) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "sourceKey and key must resolve to the same session store",
+        ),
+      );
+      return;
+    }
+
+    const { cfg, storePath } = sourceResolved;
+    const sourceTarget = sourceResolved.target;
+    let sourceCanonicalKey = sourceKey;
+    let targetCanonicalKey = key;
+
+    let sourceSessionId: string | undefined;
+    const forked = await updateSessionStore(storePath, (store) => {
+      const sourceMigration = migrateAndPruneSessionStoreKey({ cfg, key: sourceKey, store });
+      const targetMigration = migrateAndPruneSessionStoreKey({ cfg, key, store });
+      sourceCanonicalKey = sourceMigration.primaryKey;
+      targetCanonicalKey = targetMigration.primaryKey;
+      const sourceEntry = sourceMigration.entry;
+      if (!sourceEntry?.sessionId) {
+        return { ok: false as const, reason: "missing-source" as const };
+      }
+      if (store[targetMigration.primaryKey]?.sessionId) {
+        return { ok: false as const, reason: "target-exists" as const };
+      }
+      const nextFork = forkSessionFromParent({
+        parentEntry: sourceEntry,
+        agentId: sourceTarget.agentId,
+        sessionsDir: path.dirname(storePath),
+      });
+      if (!nextFork) {
+        return { ok: false as const, reason: "fork-failed" as const };
+      }
+      const now = Date.now();
+      sourceSessionId = sourceEntry.sessionId;
+      store[targetMigration.primaryKey] = {
+        ...sourceEntry,
+        sessionId: nextFork.sessionId,
+        sessionFile: nextFork.sessionFile,
+        updatedAt: now,
+        systemSent: sourceEntry.systemSent ?? false,
+        abortedLastRun: false,
+        forkedFromParent: true,
+      };
+      return {
+        ok: true as const,
+        forked: nextFork,
+        entry: store[targetMigration.primaryKey],
+      };
+    });
+
+    if (!forked.ok) {
+      if (forked.reason === "missing-source") {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, `source session not found: ${sourceKey}`),
+        );
+        return;
+      }
+      if (forked.reason === "target-exists") {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, `target session already exists: ${key}`),
+        );
+        return;
+      }
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, "failed to fork source session transcript"),
+      );
+      return;
+    }
+
+    respond(
+      true,
+      {
+        ok: true,
+        key: targetCanonicalKey,
+        sourceKey: sourceCanonicalKey,
+        sourceSessionId,
+        entry: forked.entry,
+      },
+      undefined,
+    );
   },
   "sessions.delete": async ({ params, respond, client, isWebchatConnect }) => {
     if (!assertValidParams(params, validateSessionsDeleteParams, "sessions.delete", respond)) {

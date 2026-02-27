@@ -7,12 +7,15 @@ type SetActivityStatusMock = ReturnType<typeof vi.fn> & ((text: string) => void)
 function createHarness(params?: {
   sendChat?: ReturnType<typeof vi.fn>;
   resetSession?: ReturnType<typeof vi.fn>;
+  forkSession?: ReturnType<typeof vi.fn>;
   loadHistory?: LoadHistoryMock;
   setActivityStatus?: SetActivityStatusMock;
   isConnected?: boolean;
 }) {
   const sendChat = params?.sendChat ?? vi.fn().mockResolvedValue({ runId: "r1" });
   const resetSession = params?.resetSession ?? vi.fn().mockResolvedValue({ ok: true });
+  const forkSession =
+    params?.forkSession ?? vi.fn().mockResolvedValue({ ok: true, key: "agent:main:branched" });
   const addUser = vi.fn();
   const addSystem = vi.fn();
   const requestRender = vi.fn();
@@ -21,7 +24,7 @@ function createHarness(params?: {
   const setActivityStatus = params?.setActivityStatus ?? (vi.fn() as SetActivityStatusMock);
 
   const { handleCommand } = createCommandHandlers({
-    client: { sendChat, resetSession } as never,
+    client: { sendChat, resetSession, forkSession } as never,
     chatLog: { addUser, addSystem } as never,
     tui: { requestRender } as never,
     opts: {},
@@ -51,6 +54,7 @@ function createHarness(params?: {
     handleCommand,
     sendChat,
     resetSession,
+    forkSession,
     addUser,
     addSystem,
     requestRender,
@@ -140,5 +144,55 @@ describe("tui command handlers", () => {
     expect(addUser).not.toHaveBeenCalled();
     expect(addSystem).toHaveBeenCalledWith("not connected to gateway — message not sent");
     expect(setActivityStatus).toHaveBeenLastCalledWith("disconnected");
+  });
+
+  it("forks current session and switches to returned key", async () => {
+    const setSession = vi.fn().mockResolvedValue(undefined);
+    const forkSession = vi.fn().mockResolvedValue({ ok: true, key: "agent:main:forked" });
+    const addSystem = vi.fn();
+    const { handleCommand } = createCommandHandlers({
+      client: { sendChat: vi.fn(), resetSession: vi.fn(), forkSession } as never,
+      chatLog: { addUser: vi.fn(), addSystem } as never,
+      tui: { requestRender: vi.fn() } as never,
+      opts: {},
+      state: {
+        currentSessionKey: "agent:main:main",
+        activeChatRunId: null,
+        isConnected: true,
+        sessionInfo: {},
+      } as never,
+      deliverDefault: false,
+      openOverlay: vi.fn(),
+      closeOverlay: vi.fn(),
+      refreshSessionInfo: vi.fn(),
+      loadHistory: vi.fn(),
+      setSession,
+      refreshAgents: vi.fn(),
+      abortActive: vi.fn(),
+      setActivityStatus: vi.fn(),
+      formatSessionKey: (key: string) => key,
+      applySessionInfoFromPatch: vi.fn(),
+      noteLocalRunId: vi.fn(),
+      forgetLocalRunId: vi.fn(),
+      requestExit: vi.fn(),
+    });
+
+    await handleCommand("/fork forked");
+
+    expect(forkSession).toHaveBeenCalledWith({
+      sourceKey: "agent:main:main",
+      key: "forked",
+    });
+    expect(setSession).toHaveBeenCalledWith("agent:main:forked");
+    expect(addSystem).toHaveBeenCalledWith("forked agent:main:main -> agent:main:forked");
+  });
+
+  it("shows usage when /fork is missing target key", async () => {
+    const { handleCommand, forkSession, addSystem } = createHarness();
+
+    await handleCommand("/fork");
+
+    expect(forkSession).not.toHaveBeenCalled();
+    expect(addSystem).toHaveBeenCalledWith("usage: /fork <newkey>");
   });
 });

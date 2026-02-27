@@ -120,7 +120,7 @@ function resolveParentForkMaxTokens(cfg: OpenClawConfig): number {
   return DEFAULT_PARENT_FORK_MAX_TOKENS;
 }
 
-function forkSessionFromParent(params: {
+export function forkSessionFromParent(params: {
   parentEntry: SessionEntry;
   agentId: string;
   sessionsDir: string;

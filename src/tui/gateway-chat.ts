@@ -10,6 +10,7 @@ import { GATEWAY_CLIENT_CAPS } from "../gateway/protocol/client-info.js";
 import {
   type HelloOk,
   PROTOCOL_VERSION,
+  type SessionsForkParams,
   type SessionsListParams,
   type SessionsPatchResult,
   type SessionsPatchParams,
@@ -98,6 +99,12 @@ export type GatewayModelChoice = {
   provider: string;
   contextWindow?: number;
   reasoning?: boolean;
+};
+
+export type GatewaySessionsForkResult = {
+  ok: boolean;
+  key?: string;
+  sourceKey?: string;
 };
 
 export class GatewayChatClient {
@@ -222,6 +229,10 @@ export class GatewayChatClient {
       key,
       ...(reason ? { reason } : {}),
     });
+  }
+
+  async forkSession(opts: SessionsForkParams): Promise<GatewaySessionsForkResult> {
+    return await this.client.request<GatewaySessionsForkResult>("sessions.fork", opts);
   }
 
   async getStatus() {
