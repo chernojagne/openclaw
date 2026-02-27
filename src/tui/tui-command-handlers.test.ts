@@ -282,6 +282,6 @@ describe("tui command handlers", () => {
     await handleCommand("/fork");
 
     expect(forkSession).not.toHaveBeenCalled();
-    expect(addSystem).toHaveBeenCalledWith("usage: /fork <newkey>");
+    expect(addSystem).toHaveBeenCalledWith("usage: /fork <key>");
   });
 });

@@ -148,7 +148,7 @@ export function helpText(options: SlashCommandOptions = {}): string {
     "/status",
     "/agent <id> (or /agents)",
     "/session <key> (or /sessions)",
-    "/fork <newkey>",
+    "/fork <key>",
     "/model <provider/model> (or /models)",
     `/think <${thinkLevels}>`,
     "/fast <status|on|off>",
