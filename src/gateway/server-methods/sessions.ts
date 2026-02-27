@@ -9,6 +9,7 @@ import {
   waitForEmbeddedPiRunEnd,
 } from "../../agents/pi-embedded-runner/runs.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue/cleanup.js";
+import { forkSessionFromParent } from "../../auto-reply/reply/session-fork.js";
 import { loadConfig } from "../../config/config.js";
 import {
   loadSessionStore,
@@ -37,6 +38,7 @@ import {
   validateSessionsCompactParams,
   validateSessionsCreateParams,
   validateSessionsDeleteParams,
+  validateSessionsForkParams,
   validateSessionsListParams,
   validateSessionsMessagesSubscribeParams,
   validateSessionsMessagesUnsubscribeParams,
@@ -1001,7 +1003,128 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       reason,
     });
   },
-  "sessions.delete": async ({ params, respond, client, isWebchatConnect, context }) => {
+  "sessions.fork": async ({ params, respond, context }) => {
+    if (!assertValidParams(params, validateSessionsForkParams, "sessions.fork", respond)) {
+      return;
+    }
+    const p = params;
+    const key = requireSessionKey(p.key, respond);
+    if (!key) {
+      return;
+    }
+    const sourceKey = requireSessionKey(p.sourceKey, respond);
+    if (!sourceKey) {
+      return;
+    }
+    if (sourceKey === key) {
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INVALID_REQUEST, "sourceKey and key must differ"),
+      );
+      return;
+    }
+
+    const sourceResolved = resolveGatewaySessionTargetFromKey(sourceKey);
+    const targetResolved = resolveGatewaySessionTargetFromKey(key);
+    if (sourceResolved.storePath !== targetResolved.storePath) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          "sourceKey and key must resolve to the same session store",
+        ),
+      );
+      return;
+    }
+
+    const { cfg, storePath } = sourceResolved;
+    const targetAgentId = targetResolved.target.agentId;
+    let sourceCanonicalKey = sourceKey;
+    let targetCanonicalKey = key;
+
+    let sourceSessionId: string | undefined;
+    const forked = await updateSessionStore(storePath, async (store) => {
+      const sourceMigration = migrateAndPruneSessionStoreKey({ cfg, key: sourceKey, store });
+      const targetMigration = migrateAndPruneSessionStoreKey({ cfg, key, store });
+      sourceCanonicalKey = sourceMigration.primaryKey;
+      targetCanonicalKey = targetMigration.primaryKey;
+      const sourceEntry = sourceMigration.entry;
+      if (!sourceEntry?.sessionId) {
+        return { ok: false as const, reason: "missing-source" as const };
+      }
+      if (store[targetMigration.primaryKey]?.sessionId) {
+        return { ok: false as const, reason: "target-exists" as const };
+      }
+      const nextFork = await forkSessionFromParent({
+        parentEntry: sourceEntry,
+        agentId: targetAgentId,
+        sessionsDir: path.dirname(storePath),
+      });
+      if (!nextFork) {
+        return { ok: false as const, reason: "fork-failed" as const };
+      }
+      const now = Date.now();
+      sourceSessionId = sourceEntry.sessionId;
+      store[targetMigration.primaryKey] = {
+        ...sourceEntry,
+        sessionId: nextFork.sessionId,
+        sessionFile: nextFork.sessionFile,
+        updatedAt: now,
+        systemSent: sourceEntry.systemSent ?? false,
+        abortedLastRun: false,
+        forkedFromParent: true,
+      };
+      return {
+        ok: true as const,
+        forked: nextFork,
+        entry: store[targetMigration.primaryKey],
+      };
+    });
+
+    if (!forked.ok) {
+      if (forked.reason === "missing-source") {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, `source session not found: ${sourceKey}`),
+        );
+        return;
+      }
+      if (forked.reason === "target-exists") {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, `target session already exists: ${key}`),
+        );
+        return;
+      }
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.UNAVAILABLE, "failed to fork source session transcript"),
+      );
+      return;
+    }
+
+    respond(
+      true,
+      {
+        ok: true,
+        key: targetCanonicalKey,
+        sourceKey: sourceCanonicalKey,
+        sourceSessionId,
+        entry: forked.entry,
+      },
+      undefined,
+    );
+    emitSessionsChanged(context, {
+      sessionKey: targetCanonicalKey,
+      reason: "fork",
+    });
+  },
+  "sessions.delete": async ({ params, respond, client, isWebchatConnect }) => {
     if (!assertValidParams(params, validateSessionsDeleteParams, "sessions.delete", respond)) {
       return;
     }
@@ -1077,6 +1200,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         reason: "delete",
       });
     }
+    "sessions.delete": async ({ params, respond, client, isWebchatConnect, context }) => {
   },
   "sessions.get": ({ params, respond }) => {
     const p = params;

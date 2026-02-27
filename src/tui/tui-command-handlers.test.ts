@@ -10,6 +10,7 @@ function createHarness(params?: {
   patchSession?: ReturnType<typeof vi.fn>;
   resetSession?: ReturnType<typeof vi.fn>;
   setSession?: SetSessionMock;
+  forkSession?: ReturnType<typeof vi.fn>;
   loadHistory?: LoadHistoryMock;
   refreshSessionInfo?: ReturnType<typeof vi.fn>;
   applySessionInfoFromPatch?: ReturnType<typeof vi.fn>;
@@ -21,6 +22,8 @@ function createHarness(params?: {
   const patchSession = params?.patchSession ?? vi.fn().mockResolvedValue({});
   const resetSession = params?.resetSession ?? vi.fn().mockResolvedValue({ ok: true });
   const setSession = params?.setSession ?? (vi.fn().mockResolvedValue(undefined) as SetSessionMock);
+  const forkSession =
+    params?.forkSession ?? vi.fn().mockResolvedValue({ ok: true, key: "agent:main:branched" });
   const addUser = vi.fn();
   const addSystem = vi.fn();
   const requestRender = vi.fn();
@@ -40,7 +43,7 @@ function createHarness(params?: {
   };
 
   const { handleCommand } = createCommandHandlers({
-    client: { sendChat, patchSession, resetSession } as never,
+    client: { sendChat, patchSession, resetSession, forkSession } as never,
     chatLog: { addUser, addSystem } as never,
     tui: { requestRender } as never,
     opts: {},
@@ -54,7 +57,7 @@ function createHarness(params?: {
     refreshAgents: vi.fn(),
     abortActive: vi.fn(),
     setActivityStatus,
-    formatSessionKey: vi.fn(),
+    formatSessionKey: vi.fn((key: string) => key),
     applySessionInfoFromPatch: applySessionInfoFromPatch as never,
     noteLocalRunId,
     noteLocalBtwRunId,
@@ -69,6 +72,7 @@ function createHarness(params?: {
     patchSession,
     resetSession,
     setSession,
+    forkSession,
     addUser,
     addSystem,
     requestRender,
@@ -252,5 +256,32 @@ describe("tui command handlers", () => {
     expect(addSystem).toHaveBeenCalledWith("activation set to always");
     expect(applySessionInfoFromPatch).toHaveBeenCalledWith({ groupActivation: "always" });
     expect(refreshSessionInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it("forks current session and switches to returned key", async () => {
+    const setSession = vi.fn().mockResolvedValue(undefined) as SetSessionMock;
+    const forkSession = vi.fn().mockResolvedValue({ ok: true, key: "agent:main:forked" });
+    const { handleCommand, addSystem } = createHarness({
+      setSession,
+      forkSession,
+    });
+
+    await handleCommand("/fork forked");
+
+    expect(forkSession).toHaveBeenCalledWith({
+      sourceKey: "agent:main:main",
+      key: "forked",
+    });
+    expect(setSession).toHaveBeenCalledWith("agent:main:forked");
+    expect(addSystem).toHaveBeenCalledWith("forked agent:main:main -> agent:main:forked");
+  });
+
+  it("shows usage when /fork is missing target key", async () => {
+    const { handleCommand, forkSession, addSystem } = createHarness();
+
+    await handleCommand("/fork");
+
+    expect(forkSession).not.toHaveBeenCalled();
+    expect(addSystem).toHaveBeenCalledWith("usage: /fork <newkey>");
   });
 });
