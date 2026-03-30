@@ -169,8 +169,8 @@ export function createCommandHandlers(context: CommandHandlerContext) {
       const items = result.sessions.map((session) => {
         const title = session.derivedTitle ?? session.displayName;
         const formattedKey = formatSessionKey(session.key);
-        // Avoid redundant "title (key)" when title matches key
-        const label = title && title !== formattedKey ? `${title} (${formattedKey})` : formattedKey;
+        // Keep key first so it remains visible on narrow terminals.
+        const label = title && title !== formattedKey ? `${formattedKey} · ${title}` : formattedKey;
         // Build description: time + message preview
         const timePart = session.updatedAt
           ? formatRelativeTimestamp(session.updatedAt, { dateFallback: true, fallback: "" })
